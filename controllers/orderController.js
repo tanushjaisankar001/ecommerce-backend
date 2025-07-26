@@ -8,7 +8,6 @@ const createOrder = async (req, res) => {
 
     if (user && user.cartItems.length > 0) {
         const { shippingAddress } = req.body;
-
         const totalPrice = user.cartItems.reduce((acc, item) => acc + item.qty * item.price, 0);
 
         const order = new Order({
@@ -20,26 +19,26 @@ const createOrder = async (req, res) => {
 
         const createdOrder = await order.save();
         
-        user.cartItems = [];
-        await user.save();
-
         const instance = new Razorpay({
             key_id: process.env.RAZORPAY_KEY_ID,
             key_secret: process.env.RAZORPAY_KEY_SECRET,
         });
 
         const options = {
-            amount: totalPrice * 100, // Amount in the smallest currency unit (paise)
+            amount: totalPrice * 100,
             currency: "INR",
             receipt: createdOrder._id.toString(),
         };
 
-        instance.orders.create(options, function(err, razorpayOrder) {
-            if (err) {
-                return res.status(500).json({ message: "Something Went Wrong" });
-            }
-            res.status(201).json({ order: createdOrder, razorpayOrder });
-        });
+        const razorpayOrder = await instance.orders.create(options);
+
+        createdOrder.razorpay.orderId = razorpayOrder.id;
+        await createdOrder.save();
+        
+        user.cartItems = [];
+        await user.save();
+
+        res.status(201).json({ order: createdOrder, razorpayOrder });
 
     } else {
         res.status(400).json({ message: 'No items in cart' });
@@ -48,7 +47,6 @@ const createOrder = async (req, res) => {
 
 const verifyPayment = async (req, res) => {
     const { orderId, razorpayPaymentId, razorpaySignature } = req.body;
-
     const sign = orderId + "|" + razorpayPaymentId;
     const expectedSign = crypto
         .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
@@ -63,7 +61,6 @@ const verifyPayment = async (req, res) => {
             order.paidAt = Date.now();
             order.razorpay.paymentId = razorpayPaymentId;
             order.razorpay.signature = razorpaySignature;
-
             const updatedOrder = await order.save();
             res.json(updatedOrder);
         } else {
@@ -74,4 +71,14 @@ const verifyPayment = async (req, res) => {
     }
 };
 
-module.exports = { createOrder, verifyPayment };
+const getMyOrders = async (req, res) => {
+    const orders = await Order.find({ user: req.user._id });
+    res.json(orders);
+};
+
+const getOrders = async (req, res) => {
+    const orders = await Order.find({}).populate('user', 'id name');
+    res.json(orders);
+};
+
+module.exports = { createOrder, verifyPayment, getMyOrders, getOrders };
